@@ -155,9 +155,16 @@ class TestValidateOtelOpts(unittest.TestCase):
         # Must not raise even in an otherwise-invalid combination.
         validate_otel_opts(make_opts(otel=False, version="4.2", local_atlas=True))
 
-    def test_latest_and_rapid_allowed(self):
+    def test_nightly_aliases_allowed(self):
         validate_otel_opts(make_opts(version="latest"))
-        validate_otel_opts(make_opts(version="rapid"))
+        validate_otel_opts(make_opts(version="latest-build"))
+
+    def test_unguaranteed_aliases_rejected(self):
+        # These resolve to the newest *published* release, which can be
+        # below 9.0 while 9.0 is unpublished.
+        for version in ("rapid", "latest-release", "latest-stable"):
+            with self.assertRaisesRegex(ValueError, "9.0"):
+                validate_otel_opts(make_opts(version=version))
 
     def test_90_and_above_allowed(self):
         validate_otel_opts(make_opts(version="9.0"))

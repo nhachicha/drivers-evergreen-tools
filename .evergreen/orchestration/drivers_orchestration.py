@@ -356,10 +356,22 @@ def validate_otel_opts(opts):
     # Optional "v" prefix: mongodl aliases like v8.0-perf resolve to servers
     # below 9.0 and must be caught here rather than failing at startup.
     match = re.match(r"^v?(\d+)(?:\.(\d+))?", opts.version)
-    if match and (int(match.group(1)), int(match.group(2) or 0)) < (9, 0):
+    if match:
+        if (int(match.group(1)), int(match.group(2) or 0)) < (9, 0):
+            raise ValueError(
+                f"--otel requires MongoDB 9.0+ (OTel setParameters do not "
+                f"exist on {opts.version})"
+            )
+    # Non-numeric aliases are default-closed: only master nightlies are
+    # guaranteed to be 9.0+. Aliases like "rapid", "latest-release", and
+    # "latest-stable" resolve to the newest *published* release, which is
+    # still 8.x while 9.0 is unpublished (see UNPUBLISHED_VERSIONS). Add an
+    # alias here once every version it can resolve to is 9.0+.
+    elif opts.version not in ("latest", "latest-build"):
         raise ValueError(
-            f"--otel requires MongoDB 9.0+ (OTel setParameters do not exist "
-            f"on {opts.version})"
+            f"--otel requires MongoDB 9.0+, which cannot be guaranteed for "
+            f"version {opts.version!r}; use 'latest' or an explicit 9.x+ "
+            f"version"
         )
     if os.environ.get("DOCKER_RUNNING"):
         raise ValueError(

@@ -89,7 +89,6 @@ class TestHandleOtelConfig(unittest.TestCase):
         self.assert_member(
             data["shards"][0]["shardParams"]["members"][0]["procParams"], 27217
         )
-        # Router entries hold proc params directly (no procParams wrapper).
         self.assert_member(data["routers"][0], 27017)
 
     def test_preserves_existing_set_parameter(self):

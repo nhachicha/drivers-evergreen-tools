@@ -55,16 +55,15 @@ UNPUBLISHED_VERSIONS = {"9.0"}
 # strategy -- including defaultSampling -- also carries its own
 # tokenBucketRateLimit (default refillRate 1/s, maxTokens 10) that throttles
 # spans independently of samplingFactor, so it must be raised here too or
-# internally-initiated spans still get capped at a 10-burst. Externally-
-# propagated contexts (driver traceparents) bypass the probability sampler
-# entirely and go through the separate openTelemetryExternalTracing
-# setParameter -- NOT nested under openTelemetryTracingSampling -- which
-# needs the same raise. The values are JSON strings because
-# mongo-orchestration setParameter values must be scalars.
+# internally-initiated spans still get capped at a 10-burst.
 OTEL_SAMPLING_JSON = (
     '{"defaultSampling":{"samplingFactor":1.0,'
     '"tokenBucketRateLimit":{"refillRate":1000.0,"maxTokens":1000}}}'
 )
+# Externally-propagated contexts (driver traceparents) bypass the probability
+# sampler entirely and go through the separate openTelemetryExternalTracing
+# setParameter -- NOT nested under openTelemetryTracingSampling -- which
+# needs the same raise.
 OTEL_EXTERNAL_TRACING_JSON = (
     '{"tokenBucketRateLimit":{"refillRate":1000.0,"maxTokens":1000}}'
 )

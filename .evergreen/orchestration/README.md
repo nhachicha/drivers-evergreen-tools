@@ -20,10 +20,16 @@ OTEL=1 MONGODB_VERSION=latest TOPOLOGY=server \
 This requires MongoDB 9.0+ (the setParameters do not exist on older servers)
 and a locally orchestrated cluster: the file exporter has no wire protocol,
 so the test runner must share a filesystem with the server processes.
-Orchestration fails fast if `OTEL` is combined with an older version,
-`DOCKER_RUNNING`, `--local-atlas`, or `--mongodb-runner`.
+Orchestration fails fast if `OTEL` is combined with a version below 9.0, a
+version alias that cannot guarantee 9.0+ (`rapid`, `latest-release`,
+`latest-stable`), `DOCKER_RUNNING`, `LOCAL_ATLAS` (`--local-atlas`), or
+`MONGODB_RUNNER` (`--mongodb-runner`).
 
-Span export additionally requires a mongod binary compiled with OpenTelemetry support (the server's span-export tests are tagged `requires_otel_build`). On builds without it, the parameters are accepted but no span files are written — orchestration cannot detect this, so run the prose tests against an OTel-enabled 9.0+ build.
+Span export additionally requires a mongod binary compiled with
+OpenTelemetry support (the server's span-export tests are tagged
+`requires_otel_build`). On builds without it, the parameters are accepted
+but no span files are written — orchestration cannot detect this, so run
+the prose tests against an OTel-enabled 9.0+ build.
 
 Each cluster member writes OTLP JSON span batches (one batch per line,
 NDJSON) into its own per-port directory:
@@ -43,9 +49,7 @@ alongside `MONGODB_URI`. Driver test suites should:
 - Enable `OTEL` only in a dedicated task or variant pinned to a 9.0+
   version (e.g. `VERSION: latest` or an explicit `9.x`), never in a shared
   orchestration function — the version fail-fast will break every variant
-  pinned below 9.0 otherwise. Aliases that resolve to the newest published
-  release (`rapid`, `latest-release`, `latest-stable`) are rejected while
-  they cannot guarantee a 9.0+ server.
+  pinned below 9.0 otherwise.
 - Poll for span files with a generous timeout (e.g. 30 s) rather than a
   single sleep: spans are batched every
   `openTelemetryTracingBatchExportIntervalMillis` (default 1000 ms).

@@ -104,6 +104,20 @@ class TestHandleOtelConfig(unittest.TestCase):
         self.assertEqual(data["procParams"]["setParameter"]["enableTestCommands"], 1)
         self.assert_member(data["procParams"], 27017)
 
+    def test_conflicting_otel_settings_raise(self):
+        # A config that already enables another OTel exporter (e.g. the HTTP
+        # endpoint) would only fail at server startup; fail fast instead.
+        data = {
+            "name": "mongod",
+            "procParams": {
+                "ipv6": True,
+                "port": 27017,
+                "setParameter": {"opentelemetryHttpEndpoint": "localhost:4318"},
+            },
+        }
+        with self.assertRaisesRegex(ValueError, "opentelemetryHttpEndpoint"):
+            handle_otel_config(data, self.otel_root)
+
     def test_missing_port_raises(self):
         data = {"name": "mongod", "procParams": {"ipv6": True}}
         with self.assertRaises(ValueError):

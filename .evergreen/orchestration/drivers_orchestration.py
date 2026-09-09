@@ -334,6 +334,16 @@ def handle_otel_config(data, otel_root):
         member_dir = Path(otel_root) / str(member["port"])
         os.makedirs(member_dir, exist_ok=True)
         set_param = member.setdefault("setParameter", {})
+        # Pre-existing OTel settings (e.g. opentelemetryHttpEndpoint, or a
+        # tracing compression the file exporter rejects) can conflict with
+        # the parameters injected below and would only fail at server
+        # startup, after the download. Fail fast instead.
+        conflicts = [k for k in set_param if k.lower().startswith("opentelemetry")]
+        if conflicts:
+            raise ValueError(
+                f"--otel conflicts with OpenTelemetry setParameters already "
+                f"present in the orchestration config: {conflicts}"
+            )
         set_param["opentelemetryTraceDirectory"] = normalize_path(member_dir)
         set_param["featureFlagOtelTraceSampling"] = "true"
         set_param["openTelemetryTracingSampling"] = OTEL_SAMPLING_JSON
@@ -741,8 +751,11 @@ def run(opts):
 
     # Handle the cluster uri.
     expansions = {"MONGODB_URI": uri}
-    if opts.otel:
-        expansions["OTEL_TRACE_DIR"] = normalize_path(otel_root)
+    # Always emit OTEL_TRACE_DIR: an empty value on non-OTel runs overwrites
+    # any stale value left in the environment or Evergreen expansions by an
+    # earlier --otel run (whose directory clean_run has since deleted), so
+    # driver tests gating on "unset or empty" reliably skip.
+    expansions["OTEL_TRACE_DIR"] = normalize_path(otel_root) if opts.otel else ""
     MO_EXPANSION_YML.touch()
     MO_EXPANSION_SH.touch()
     yml_text = MO_EXPANSION_YML.read_text()

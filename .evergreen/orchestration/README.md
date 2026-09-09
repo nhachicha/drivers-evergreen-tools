@@ -42,7 +42,9 @@ $DRIVERS_TOOLS/otel/          <- exported as OTEL_TRACE_DIR
 ```
 
 `OTEL_TRACE_DIR` is written to `mo-expansion.sh` / `mo-expansion.yml`
-alongside `MONGODB_URI`. Driver test suites should:
+alongside `MONGODB_URI` (as an empty value when `OTEL` is not enabled, so a
+stale value from an earlier opt-in run is always overwritten). Driver test
+suites should:
 
 - Skip the prose test when `OTEL_TRACE_DIR` is unset or empty (this covers
   every environment that did not opt in — no same-host detection needed).

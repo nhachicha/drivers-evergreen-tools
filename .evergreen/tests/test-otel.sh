@@ -61,8 +61,8 @@ $MONGODB_BINARIES/mongosh "mongodb://localhost:27017/?directConnection=true" --e
 
 # Opt-in regression: without OTEL, no trace dir and no expansion entry.
 ./orchestration/drivers-orchestration run --version latest
-if grep -q OTEL_TRACE_DIR mo-expansion.sh; then
-  echo "ERROR: OTEL_TRACE_DIR exported without OTEL=1"
+if ! grep -q '^OTEL_TRACE_DIR=""$' mo-expansion.sh; then
+  echo "ERROR: OTEL_TRACE_DIR should be exported as empty without OTEL=1 (to clear stale values)"
   exit 1
 fi
 if [ -d "${DRIVERS_TOOLS}/otel" ]; then

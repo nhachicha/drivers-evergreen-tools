@@ -118,6 +118,20 @@ class TestHandleOtelConfig(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "opentelemetryHttpEndpoint"):
             handle_otel_config(data, self.otel_root)
 
+    def test_disabled_tracing_feature_flag_raises(self):
+        # featureFlagTracing=false starts fine but silently exports no spans:
+        # the server requires it alongside featureFlagOtelTraceSampling.
+        data = {
+            "name": "mongod",
+            "procParams": {
+                "ipv6": True,
+                "port": 27017,
+                "setParameter": {"featureFlagTracing": False},
+            },
+        }
+        with self.assertRaisesRegex(ValueError, "featureFlagTracing"):
+            handle_otel_config(data, self.otel_root)
+
     def test_missing_port_raises(self):
         data = {"name": "mongod", "procParams": {"ipv6": True}}
         with self.assertRaises(ValueError):

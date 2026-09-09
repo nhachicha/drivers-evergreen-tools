@@ -337,8 +337,18 @@ def handle_otel_config(data, otel_root):
         # Pre-existing OTel settings (e.g. opentelemetryHttpEndpoint, or a
         # tracing compression the file exporter rejects) can conflict with
         # the parameters injected below and would only fail at server
-        # startup, after the download. Fail fast instead.
-        conflicts = [k for k in set_param if k.lower().startswith("opentelemetry")]
+        # startup, after the download. The tracing feature flags are also
+        # rejected: featureFlagTracing=false would start fine yet silently
+        # export no spans (the server requires it alongside
+        # featureFlagOtelTraceSampling), and a pre-set
+        # featureFlagOtelTraceSampling would be silently overwritten below.
+        # Fail fast instead.
+        conflicts = [
+            k
+            for k in set_param
+            if k.lower().startswith("opentelemetry")
+            or k in ("featureFlagTracing", "featureFlagOtelTraceSampling")
+        ]
         if conflicts:
             raise ValueError(
                 f"--otel conflicts with OpenTelemetry setParameters already "

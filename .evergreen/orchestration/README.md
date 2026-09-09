@@ -40,9 +40,12 @@ alongside `MONGODB_URI`. Driver test suites should:
 
 - Skip the prose test when `OTEL_TRACE_DIR` is unset or empty (this covers
   every environment that did not opt in — no same-host detection needed).
-- Enable `OTEL` only in a dedicated task or variant pinned to
-  `VERSION: latest`, never in a shared orchestration function — the version
-  fail-fast will break every variant pinned below 9.0 otherwise.
+- Enable `OTEL` only in a dedicated task or variant pinned to a 9.0+
+  version (e.g. `VERSION: latest` or an explicit `9.x`), never in a shared
+  orchestration function — the version fail-fast will break every variant
+  pinned below 9.0 otherwise. Aliases that resolve to the newest published
+  release (`rapid`, `latest-release`, `latest-stable`) are rejected while
+  they cannot guarantee a 9.0+ server.
 - Poll for span files with a generous timeout (e.g. 30 s) rather than a
   single sleep: spans are batched every
   `openTelemetryTracingBatchExportIntervalMillis` (default 1000 ms).

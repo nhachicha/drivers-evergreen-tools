@@ -26,6 +26,8 @@ so the test runner must share a filesystem with the server processes.
 Orchestration fails fast if `OTEL` is combined with a version below 9.0, a
 version alias that cannot guarantee 9.0+ (`rapid`, `latest-release`,
 `latest-stable`), `DOCKER_RUNNING`, or `LOCAL_ATLAS` (`--local-atlas`).
+With `--existing-binaries-dir` the version of the provided `mongod` binary
+is probed directly, since it bypasses version selection.
 
 Span export additionally requires a mongod binary compiled with
 OpenTelemetry support (the server's span-export tests are tagged

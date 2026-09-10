@@ -226,6 +226,10 @@ class TestValidateOtelOpts(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "local-atlas"):
             validate_otel_opts(make_opts(local_atlas=True))
 
+    def test_not_probed_when_otel_unset(self):
+        # existing-binaries probing must not run when otel is off.
+        validate_otel_opts(make_opts(otel=False, existing_binaries_dir="/nonexistent"))
+
 
 if __name__ == "__main__":
     unittest.main()

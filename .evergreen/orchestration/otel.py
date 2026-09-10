@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -135,3 +136,36 @@ def validate_otel_opts(opts):
         )
     if opts.local_atlas:
         raise ValueError("--otel is not supported with --local-atlas")
+    # --existing-binaries-dir bypasses the version selection above, so gate
+    # on the actual binary. This is the primary path for OTel-enabled custom
+    # builds (see requires_otel_build in README.md), so probe rather than
+    # reject the combination.
+    binaries_dir = getattr(opts, "existing_binaries_dir", None)
+    if binaries_dir:
+        _check_existing_binaries_version(binaries_dir)
+
+
+def _check_existing_binaries_version(binaries_dir):
+    """Raise ValueError unless the mongod in binaries_dir reports 9.0+."""
+    ext = ".exe" if PLATFORM == "win32" else ""
+    mongod = Path(binaries_dir) / f"mongod{ext}"
+    try:
+        output = subprocess.check_output(
+            [str(mongod), "--version"], encoding="utf-8", stderr=subprocess.STDOUT
+        )
+    except (OSError, subprocess.CalledProcessError) as e:
+        raise ValueError(
+            f"--otel could not determine the server version from "
+            f"{mongod} --version: {e}"
+        ) from e
+    match = re.search(r"db version v(\d+)\.(\d+)", output)
+    if match is None:
+        raise ValueError(
+            f"--otel could not parse the server version from "
+            f"{mongod} --version output: {output.splitlines()[:1]}"
+        )
+    if (int(match.group(1)), int(match.group(2))) < (9, 0):
+        raise ValueError(
+            f"--otel requires MongoDB 9.0+, but --existing-binaries-dir "
+            f"contains {match.group(0)}"
+        )

@@ -32,6 +32,18 @@ if OTEL=1 DOCKER_RUNNING=true ./orchestration/drivers-orchestration run --versio
   exit 1
 fi
 
+# --existing-binaries-dir bypasses version selection, so the gate probes the
+# actual mongod binary: a real 8.0 binary must be rejected before any
+# download or deployment.
+EXISTING_BIN_DIR=mongodl_otel_test
+rm -rf ${EXISTING_BIN_DIR}
+uv run python mongodl.py --edition enterprise --version 8.0 --component archive --out ${EXISTING_BIN_DIR} --strip-path-components 2 --retries 5
+if OTEL=1 ./orchestration/drivers-orchestration run --existing-binaries-dir=${EXISTING_BIN_DIR} 2>/dev/null; then
+  echo "ERROR: OTEL=1 with an 8.0 --existing-binaries-dir should have failed"
+  exit 1
+fi
+rm -rf ${EXISTING_BIN_DIR}
+
 # Live run: the OTel parameters must be applied and the trace dir exported.
 OTEL=1 ./orchestration/drivers-orchestration run --version latest
 
@@ -59,6 +71,25 @@ $MONGODB_BINARIES/mongosh "mongodb://localhost:27017/?directConnection=true" --e
 
 ./orchestration/drivers-orchestration stop
 
+# Positive probe path: a 9.0+ --existing-binaries-dir (copied from the latest
+# binaries the previous run downloaded) passes the gate and the cluster comes
+# up with the OTel parameters applied.
+EXISTING_BIN_LATEST=otel_existing_bin_test
+rm -rf ${EXISTING_BIN_LATEST}
+# The previous run already downloaded the latest archive into this cache
+# dir, so this is a re-extract, not a second download.
+uv run python mongodl.py --edition enterprise --version latest --component archive --out ${EXISTING_BIN_LATEST} --strip-path-components 2 --cache-dir "${DRIVERS_TOOLS}/.local/cache" --retries 5
+OTEL=1 ./orchestration/drivers-orchestration run --existing-binaries-dir=${EXISTING_BIN_LATEST}
+$MONGODB_BINARIES/mongosh "mongodb://localhost:27017/?directConnection=true" --eval '
+  const p = db.adminCommand({getParameter: 1, opentelemetryTraceDirectory: 1});
+  if (!p.opentelemetryTraceDirectory.endsWith("27017")) {
+    throw new Error("unexpected OTel parameters via existing binaries: " + JSON.stringify(p));
+  }
+  print("OTEL_EXISTING_BIN_PARAMS_OK");
+' | grep -q OTEL_EXISTING_BIN_PARAMS_OK
+./orchestration/drivers-orchestration stop
+rm -rf ${EXISTING_BIN_LATEST}
+
 # Same flow through the preferred mongodb-runner entry point (run-mongodb.sh):
 # the runner translates procParams.setParameter into --setParameter args, so
 # the injected OTel parameters must be applied there too.
@@ -67,7 +98,7 @@ OTEL=1 MONGODB_VERSION=latest bash ./run-mongodb.sh start
 # unsupported on the host, which would make the assertions below meaningless
 # for this leg. Only the runner path writes out.log as JSON-serialized
 # cluster info; mongo-orchestration writes plain daemon log text.
-if ! python3 -c "import json; json.load(open('orchestration/out.log'))" 2>/dev/null; then
+if ! uv run python -c "import json; json.load(open('orchestration/out.log'))" 2>/dev/null; then
   echo "ERROR: mongodb-runner path fell back to mongo-orchestration"
   exit 1
 fi

@@ -108,27 +108,37 @@ def validate_otel_opts(opts):
     """
     if not getattr(opts, "otel", False):
         return
-    # Optional "v" prefix: mongodl aliases like v8.0-perf resolve to servers
-    # below 9.0 and must be caught here rather than failing at startup.
-    match = re.match(r"^v?(\d+)(?:\.(\d+))?", opts.version)
-    if match:
-        if (int(match.group(1)), int(match.group(2) or 0)) < (9, 0):
+    binaries_dir = getattr(opts, "existing_binaries_dir", None)
+    if binaries_dir:
+        # --existing-binaries-dir bypasses version selection entirely (the
+        # requested version is not what runs), so the probed binary is the
+        # single source of truth and the version-string gate below does not
+        # apply. This is the primary path for OTel-enabled custom builds
+        # (see requires_otel_build in README.md).
+        _check_existing_binaries_version(binaries_dir)
+    else:
+        # Optional "v" prefix: mongodl aliases like v8.0-perf resolve to
+        # servers below 9.0 and must be caught here rather than failing at
+        # startup.
+        match = re.match(r"^v?(\d+)(?:\.(\d+))?", opts.version)
+        if match:
+            if (int(match.group(1)), int(match.group(2) or 0)) < (9, 0):
+                raise ValueError(
+                    f"--otel requires MongoDB 9.0+ (OTel setParameters do "
+                    f"not exist on {opts.version})"
+                )
+        # Non-numeric aliases are default-closed: only master nightlies are
+        # guaranteed to be 9.0+. Aliases like "rapid", "latest-release", and
+        # "latest-stable" resolve to the newest *published* release, which is
+        # still 8.x while 9.0 is unpublished (see UNPUBLISHED_VERSIONS in
+        # drivers_orchestration.py). Add an alias here once every version it
+        # can resolve to is 9.0+.
+        elif opts.version not in ("latest", "latest-build"):
             raise ValueError(
-                f"--otel requires MongoDB 9.0+ (OTel setParameters do not "
-                f"exist on {opts.version})"
+                f"--otel requires MongoDB 9.0+, which cannot be guaranteed "
+                f"for version {opts.version!r}; use 'latest' or an explicit "
+                f"9.x+ version"
             )
-    # Non-numeric aliases are default-closed: only master nightlies are
-    # guaranteed to be 9.0+. Aliases like "rapid", "latest-release", and
-    # "latest-stable" resolve to the newest *published* release, which is
-    # still 8.x while 9.0 is unpublished (see UNPUBLISHED_VERSIONS in
-    # drivers_orchestration.py). Add an alias here once every version it can
-    # resolve to is 9.0+.
-    elif opts.version not in ("latest", "latest-build"):
-        raise ValueError(
-            f"--otel requires MongoDB 9.0+, which cannot be guaranteed for "
-            f"version {opts.version!r}; use 'latest' or an explicit 9.x+ "
-            f"version"
-        )
     if os.environ.get("DOCKER_RUNNING"):
         raise ValueError(
             "--otel is not supported with DOCKER_RUNNING: the container "
@@ -136,13 +146,6 @@ def validate_otel_opts(opts):
         )
     if opts.local_atlas:
         raise ValueError("--otel is not supported with --local-atlas")
-    # --existing-binaries-dir bypasses the version selection above, so gate
-    # on the actual binary. This is the primary path for OTel-enabled custom
-    # builds (see requires_otel_build in README.md), so probe rather than
-    # reject the combination.
-    binaries_dir = getattr(opts, "existing_binaries_dir", None)
-    if binaries_dir:
-        _check_existing_binaries_version(binaries_dir)
 
 
 def _check_existing_binaries_version(binaries_dir):

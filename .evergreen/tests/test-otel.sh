@@ -79,7 +79,11 @@ rm -rf ${EXISTING_BIN_LATEST}
 # The previous run already downloaded the latest archive into this cache
 # dir, so this is a re-extract, not a second download.
 uv run python mongodl.py --edition enterprise --version latest --component archive --out ${EXISTING_BIN_LATEST} --strip-path-components 2 --cache-dir "${DRIVERS_TOOLS}/.local/cache" --retries 5
-OTEL=1 ./orchestration/drivers-orchestration run --existing-binaries-dir=${EXISTING_BIN_LATEST}
+# --version 8.0 is deliberate: with --existing-binaries-dir the probed
+# binary is authoritative and a stale requested version must not veto a
+# compatible 9.0+ build (--skip-crypt-shared avoids downloading the only
+# 8.0 artifact the version would otherwise select).
+OTEL=1 ./orchestration/drivers-orchestration run --existing-binaries-dir=${EXISTING_BIN_LATEST} --version 8.0 --skip-crypt-shared
 $MONGODB_BINARIES/mongosh "mongodb://localhost:27017/?directConnection=true" --eval '
   const p = db.adminCommand({getParameter: 1, opentelemetryTraceDirectory: 1});
   if (!p.opentelemetryTraceDirectory.endsWith("27017")) {

@@ -11,7 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from drivers_orchestration import (
+from otel import (
     OTEL_EXTERNAL_TRACING_JSON,
     OTEL_SAMPLING_JSON,
     handle_otel_config,
@@ -166,7 +166,6 @@ def make_opts(**kwargs):
         "otel": True,
         "version": "latest",
         "local_atlas": False,
-        "mongodb_runner": False,
     }
     defaults.update(kwargs)
     return SimpleNamespace(**defaults)
@@ -226,10 +225,6 @@ class TestValidateOtelOpts(unittest.TestCase):
     def test_local_atlas_rejected(self):
         with self.assertRaisesRegex(ValueError, "local-atlas"):
             validate_otel_opts(make_opts(local_atlas=True))
-
-    def test_mongodb_runner_rejected(self):
-        with self.assertRaisesRegex(ValueError, "mongodb-runner"):
-            validate_otel_opts(make_opts(mongodb_runner=True))
 
 
 if __name__ == "__main__":

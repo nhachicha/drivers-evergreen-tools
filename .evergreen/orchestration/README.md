@@ -14,16 +14,18 @@ with the server's OpenTelemetry file exporter enabled:
 
 ```bash
 OTEL=1 MONGODB_VERSION=latest TOPOLOGY=server \
-  bash .evergreen/run-orchestration.sh
+  bash .evergreen/run-mongodb.sh start
 ```
+
+(`run-orchestration.sh`, the legacy entry point, supports the same `OTEL`
+environment variable.)
 
 This requires MongoDB 9.0+ (the setParameters do not exist on older servers)
 and a locally orchestrated cluster: the file exporter has no wire protocol,
 so the test runner must share a filesystem with the server processes.
 Orchestration fails fast if `OTEL` is combined with a version below 9.0, a
 version alias that cannot guarantee 9.0+ (`rapid`, `latest-release`,
-`latest-stable`), `DOCKER_RUNNING`, `LOCAL_ATLAS` (`--local-atlas`), or
-`MONGODB_RUNNER` (`--mongodb-runner`).
+`latest-stable`), `DOCKER_RUNNING`, or `LOCAL_ATLAS` (`--local-atlas`).
 
 Span export additionally requires a mongod binary compiled with
 OpenTelemetry support (the server's span-export tests are tagged

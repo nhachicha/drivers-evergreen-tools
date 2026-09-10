@@ -59,6 +59,30 @@ $MONGODB_BINARIES/mongosh "mongodb://localhost:27017/?directConnection=true" --e
 
 ./orchestration/drivers-orchestration stop
 
+# Same flow through the preferred mongodb-runner entry point (run-mongodb.sh):
+# the runner translates procParams.setParameter into --setParameter args, so
+# the injected OTel parameters must be applied there too.
+OTEL=1 MONGODB_VERSION=latest bash ./run-mongodb.sh start
+# shellcheck disable=SC1091
+. ./mo-expansion.sh
+test -n "${OTEL_TRACE_DIR}"
+test -d "${OTEL_TRACE_DIR}/27017"
+$MONGODB_BINARIES/mongosh "mongodb://localhost:27017/?directConnection=true" --eval '
+  const p = db.adminCommand({
+    getParameter: 1,
+    opentelemetryTraceDirectory: 1,
+    openTelemetryExternalTracing: 1,
+    openTelemetryTracingFileFlushCount: 1,
+  });
+  if (!p.opentelemetryTraceDirectory.endsWith("27017") ||
+      p.openTelemetryExternalTracing.tokenBucketRateLimit.maxTokens !== 1000 ||
+      p.openTelemetryTracingFileFlushCount !== 1) {
+    throw new Error("unexpected OTel parameters via mongodb-runner: " + JSON.stringify(p));
+  }
+  print("OTEL_RUNNER_PARAMS_OK");
+' | grep -q OTEL_RUNNER_PARAMS_OK
+bash ./run-mongodb.sh stop
+
 # Opt-in regression: without OTEL, no trace dir and no expansion entry.
 ./orchestration/drivers-orchestration run --version latest
 if ! grep -q '^OTEL_TRACE_DIR=""$' mo-expansion.sh; then

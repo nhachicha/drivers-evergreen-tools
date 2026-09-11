@@ -134,7 +134,9 @@ def validate_otel_opts(opts):
             # automatically once it resolves to 9.0+. Master nightlies
             # (latest/latest-build) do not resolve via the catalog and are
             # always 9.0+.
-            resolved = _resolve_published_version(opts.version)
+            resolved = _resolve_published_version(
+                opts.version, getattr(opts, "arch", None)
+            )
             if _numeric_below_90(resolved) is not False:
                 raise ValueError(
                     f"--otel requires MongoDB 9.0+, but version "
@@ -157,9 +159,12 @@ def _numeric_below_90(version):
     return (int(match.group(1)), int(match.group(2) or 0)) < (9, 0)
 
 
-def _resolve_published_version(version):
+def _resolve_published_version(version, arch=None):
     """Resolve a version alias to a concrete version via mongodl's catalog.
 
+    Filters by the same target/arch/edition/component the subsequent
+    download uses, so the gate judges the artifact that will actually be
+    downloaded (releases can be published for platforms at different times).
     Raises ValueError when the alias cannot be resolved (unknown alias, no
     catalog entry, or the release list is unreachable) so the gate stays
     fail-fast rather than deferring to a server startup failure.
@@ -168,12 +173,20 @@ def _resolve_published_version(version):
     sys.path.insert(0, str(evg_dir))
     try:
         # Deferred: mongodl lives in .evergreen, only on sys.path here.
-        from mongodl import Cache
+        from mongodl import Cache, infer_arch, infer_target
 
         cache = Cache.open_in(evg_dir.parent / ".local" / "cache")
         cache.refresh_full_json()
         component = next(
-            iter(cache.db.iter_available(version=version, component="archive")),
+            iter(
+                cache.db.iter_available(
+                    version=version,
+                    target=infer_target(version),
+                    arch=arch or infer_arch(),
+                    edition="enterprise",
+                    component="archive",
+                )
+            ),
             None,
         )
     except ValueError:
@@ -188,7 +201,7 @@ def _resolve_published_version(version):
     if component is None:
         raise ValueError(
             f"--otel could not resolve version {version!r}: no published "
-            f"release matches it"
+            f"release matches it for this platform"
         )
     return component.version
 

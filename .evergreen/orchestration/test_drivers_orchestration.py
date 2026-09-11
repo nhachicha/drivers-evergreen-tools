@@ -138,6 +138,23 @@ class TestHandleOtelConfig(unittest.TestCase):
         with self.assertRaises(ValueError):
             handle_otel_config(data, self.otel_root)
 
+    def test_no_recognizable_members_raises(self):
+        # A config the traversal cannot recognize must fail loudly rather
+        # than exporting OTEL_TRACE_DIR with nothing instrumented.
+        data = {"name": "mongod", "procParams": {"port": 27017}}
+        with self.assertRaisesRegex(ValueError, "no cluster members"):
+            handle_otel_config(data, self.otel_root)
+
+    def test_scalar_lists_are_tolerated(self):
+        # Lists of scalars in custom configs must not crash the traversal.
+        data = {
+            "name": "mongod",
+            "labels": ["a", "b", 3],
+            "procParams": {"ipv6": True, "port": 27017},
+        }
+        handle_otel_config(data, self.otel_root)
+        self.assert_member(data["procParams"], 27017)
+
     def test_sampling_json_is_valid_and_pinned(self):
         # defaultSampling carries its own tokenBucketRateLimit per the server
         # IDL (trace_sampling_parameters.idl); it must be raised alongside

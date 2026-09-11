@@ -303,7 +303,7 @@ functions:
           - LOAD_BALANCER
           - LOCAL_ATLAS
           - OTEL
-          - REQUIRE_API_VERSION,
+          - REQUIRE_API_VERSION
           - SSL
           - STORAGE_ENGINE
           - TOPOLOGY

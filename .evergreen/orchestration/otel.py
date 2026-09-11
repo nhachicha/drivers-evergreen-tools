@@ -50,7 +50,8 @@ def handle_otel_config(data, otel_root):
 
     def traverse(root):
         if isinstance(root, list):
-            [traverse(i) for i in root]
+            # Guard items: custom configs can hold lists of scalars.
+            [traverse(i) for i in root if isinstance(i, (dict, list))]
             return
         if "ipv6" in root:
             members.append(root)
@@ -60,6 +61,16 @@ def handle_otel_config(data, otel_root):
                 traverse(value)
 
     traverse(data)
+
+    if not members:
+        # A config this traversal cannot recognize would otherwise be
+        # silently left un-instrumented while OTEL_TRACE_DIR is still
+        # exported, and the prose test would poll for spans that never come.
+        raise ValueError(
+            "--otel found no cluster members to configure in the "
+            "orchestration config (members are identified by an 'ipv6' key "
+            "in their process settings)"
+        )
 
     for member in members:
         if "port" not in member:
@@ -108,6 +119,16 @@ def validate_otel_opts(opts):
     """
     if not getattr(opts, "otel", False):
         return
+    # Cheap local checks first: the version gate below may hit the network
+    # (alias resolution) or exec a binary, and a resolution failure in an
+    # egress-less container would mask the real problem.
+    if os.environ.get("DOCKER_RUNNING"):
+        raise ValueError(
+            "--otel is not supported with DOCKER_RUNNING: the container "
+            "filesystem is not readable by the host test process"
+        )
+    if opts.local_atlas:
+        raise ValueError("--otel is not supported with --local-atlas")
     binaries_dir = getattr(opts, "existing_binaries_dir", None)
     if binaries_dir:
         # --existing-binaries-dir bypasses version selection entirely (the
@@ -142,13 +163,6 @@ def validate_otel_opts(opts):
                     f"--otel requires MongoDB 9.0+, but version "
                     f"{opts.version!r} resolves to {resolved}"
                 )
-    if os.environ.get("DOCKER_RUNNING"):
-        raise ValueError(
-            "--otel is not supported with DOCKER_RUNNING: the container "
-            "filesystem is not readable by the host test process"
-        )
-    if opts.local_atlas:
-        raise ValueError("--otel is not supported with --local-atlas")
 
 
 def _numeric_below_90(version):

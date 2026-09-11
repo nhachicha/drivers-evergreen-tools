@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from otel import (
@@ -185,12 +186,22 @@ class TestValidateOtelOpts(unittest.TestCase):
         validate_otel_opts(make_opts(version="latest"))
         validate_otel_opts(make_opts(version="latest-build"))
 
-    def test_unguaranteed_aliases_rejected(self):
-        # These resolve to the newest *published* release, which can be
-        # below 9.0 while 9.0 is unpublished.
-        for version in ("rapid", "latest-release", "latest-stable"):
-            with self.assertRaisesRegex(ValueError, "9.0"):
-                validate_otel_opts(make_opts(version=version))
+    def test_alias_resolving_below_90_rejected(self):
+        with mock.patch(
+            "otel._resolve_published_version", return_value="8.2.1"
+        ), self.assertRaisesRegex(ValueError, "resolves to 8.2.1"):
+            validate_otel_opts(make_opts(version="rapid"))
+
+    def test_alias_resolving_to_90_allowed(self):
+        with mock.patch("otel._resolve_published_version", return_value="9.1.0"):
+            validate_otel_opts(make_opts(version="latest-release"))
+
+    def test_unresolvable_alias_rejected(self):
+        with mock.patch(
+            "otel._resolve_published_version",
+            side_effect=ValueError("--otel could not resolve"),
+        ), self.assertRaisesRegex(ValueError, "could not resolve"):
+            validate_otel_opts(make_opts(version="rapid"))
 
     def test_90_and_above_allowed(self):
         validate_otel_opts(make_opts(version="9.0"))

@@ -117,28 +117,29 @@ def validate_otel_opts(opts):
         # (see requires_otel_build in README.md).
         _check_existing_binaries_version(binaries_dir)
     else:
-        # Optional "v" prefix: mongodl aliases like v8.0-perf resolve to
-        # servers below 9.0 and must be caught here rather than failing at
-        # startup.
-        match = re.match(r"^v?(\d+)(?:\.(\d+))?", opts.version)
-        if match:
-            if (int(match.group(1)), int(match.group(2) or 0)) < (9, 0):
-                raise ValueError(
-                    f"--otel requires MongoDB 9.0+ (OTel setParameters do "
-                    f"not exist on {opts.version})"
-                )
-        # Non-numeric aliases are default-closed: only master nightlies are
-        # guaranteed to be 9.0+. Aliases like "rapid", "latest-release", and
-        # "latest-stable" resolve to the newest *published* release, which is
-        # still 8.x while 9.0 is unpublished (see UNPUBLISHED_VERSIONS in
-        # drivers_orchestration.py). Add an alias here once every version it
-        # can resolve to is 9.0+.
-        elif opts.version not in ("latest", "latest-build"):
+        below_90 = _numeric_below_90(opts.version)
+        if below_90:
+            # Optional "v" prefix: mongodl aliases like v8.0-perf resolve to
+            # servers below 9.0 and must be caught here rather than failing
+            # at startup.
             raise ValueError(
-                f"--otel requires MongoDB 9.0+, which cannot be guaranteed "
-                f"for version {opts.version!r}; use 'latest' or an explicit "
-                f"9.x+ version"
+                f"--otel requires MongoDB 9.0+ (OTel setParameters do not "
+                f"exist on {opts.version})"
             )
+        if below_90 is None and opts.version not in ("latest", "latest-build"):
+            # Non-numeric aliases ("rapid", "latest-release",
+            # "latest-stable", ...) are resolved through mongodl's release
+            # catalog -- the same mechanism the download uses -- and the
+            # resolved version is gated, so an alias starts passing
+            # automatically once it resolves to 9.0+. Master nightlies
+            # (latest/latest-build) do not resolve via the catalog and are
+            # always 9.0+.
+            resolved = _resolve_published_version(opts.version)
+            if _numeric_below_90(resolved) is not False:
+                raise ValueError(
+                    f"--otel requires MongoDB 9.0+, but version "
+                    f"{opts.version!r} resolves to {resolved}"
+                )
     if os.environ.get("DOCKER_RUNNING"):
         raise ValueError(
             "--otel is not supported with DOCKER_RUNNING: the container "
@@ -146,6 +147,50 @@ def validate_otel_opts(opts):
         )
     if opts.local_atlas:
         raise ValueError("--otel is not supported with --local-atlas")
+
+
+def _numeric_below_90(version):
+    """True/False when version parses as [v]major[.minor]; None otherwise."""
+    match = re.match(r"^v?(\d+)(?:\.(\d+))?", version)
+    if match is None:
+        return None
+    return (int(match.group(1)), int(match.group(2) or 0)) < (9, 0)
+
+
+def _resolve_published_version(version):
+    """Resolve a version alias to a concrete version via mongodl's catalog.
+
+    Raises ValueError when the alias cannot be resolved (unknown alias, no
+    catalog entry, or the release list is unreachable) so the gate stays
+    fail-fast rather than deferring to a server startup failure.
+    """
+    evg_dir = Path(__file__).absolute().parent.parent
+    sys.path.insert(0, str(evg_dir))
+    try:
+        # Deferred: mongodl lives in .evergreen, only on sys.path here.
+        from mongodl import Cache
+
+        cache = Cache.open_in(evg_dir.parent / ".local" / "cache")
+        cache.refresh_full_json()
+        component = next(
+            iter(cache.db.iter_available(version=version, component="archive")),
+            None,
+        )
+    except ValueError:
+        raise
+    except Exception as e:
+        raise ValueError(
+            f"--otel could not resolve version {version!r} from the release "
+            f"list: {e}"
+        ) from e
+    finally:
+        sys.path.remove(str(evg_dir))
+    if component is None:
+        raise ValueError(
+            f"--otel could not resolve version {version!r}: no published "
+            f"release matches it"
+        )
+    return component.version
 
 
 def _check_existing_binaries_version(binaries_dir):

@@ -116,12 +116,14 @@ def validate_otel_opts(opts):
 
     The OTel file exporter requires MongoDB 9.0+ and a cluster that shares
     the host filesystem with the test process (the only way to read spans).
+
+    This only rejects what can be decided locally from the options; the
+    authoritative version check is check_mongod_version(), which probes the
+    actual binary after it is downloaded or copied and therefore also covers
+    version aliases, nightlies, and --existing-binaries-dir uniformly.
     """
     if not getattr(opts, "otel", False):
         return
-    # Cheap local checks first: the version gate below may hit the network
-    # (alias resolution) or exec a binary, and a resolution failure in an
-    # egress-less container would mask the real problem.
     if os.environ.get("DOCKER_RUNNING"):
         raise ValueError(
             "--otel is not supported with DOCKER_RUNNING: the container "
@@ -129,99 +131,28 @@ def validate_otel_opts(opts):
         )
     if opts.local_atlas:
         raise ValueError("--otel is not supported with --local-atlas")
-    binaries_dir = getattr(opts, "existing_binaries_dir", None)
-    if binaries_dir:
-        # --existing-binaries-dir bypasses version selection entirely (the
-        # requested version is not what runs), so the probed binary is the
-        # single source of truth and the version-string gate below does not
-        # apply. This is the primary path for OTel-enabled custom builds
-        # (see requires_otel_build in README.md).
-        _check_existing_binaries_version(binaries_dir)
-    else:
-        below_90 = _numeric_below_90(opts.version)
-        if below_90:
-            # Optional "v" prefix: mongodl aliases like v8.0-perf resolve to
-            # servers below 9.0 and must be caught here rather than failing
-            # at startup.
+    # Courtesy pre-check: reject obviously sub-9.0 version strings (e.g.
+    # "8.0", "v8.0-perf") before any download. Skipped when
+    # --existing-binaries-dir is set, where the requested version is not
+    # what runs. Aliases like "rapid" pass through here and are decided by
+    # the binary probe instead.
+    if not getattr(opts, "existing_binaries_dir", None):
+        match = re.match(r"^v?(\d+)(?:\.(\d+))?", opts.version)
+        if match and (int(match.group(1)), int(match.group(2) or 0)) < (9, 0):
             raise ValueError(
                 f"--otel requires MongoDB 9.0+ (OTel setParameters do not "
                 f"exist on {opts.version})"
             )
-        if below_90 is None and opts.version not in ("latest", "latest-build"):
-            # Non-numeric aliases ("rapid", "latest-release",
-            # "latest-stable", ...) are resolved through mongodl's release
-            # catalog -- the same mechanism the download uses -- and the
-            # resolved version is gated, so an alias starts passing
-            # automatically once it resolves to 9.0+. Master nightlies
-            # (latest/latest-build) do not resolve via the catalog and are
-            # always 9.0+.
-            resolved = _resolve_published_version(
-                opts.version, getattr(opts, "arch", None)
-            )
-            if _numeric_below_90(resolved) is not False:
-                raise ValueError(
-                    f"--otel requires MongoDB 9.0+, but version "
-                    f"{opts.version!r} resolves to {resolved}"
-                )
 
 
-def _numeric_below_90(version):
-    """True/False when version parses as [v]major[.minor]; None otherwise."""
-    match = re.match(r"^v?(\d+)(?:\.(\d+))?", version)
-    if match is None:
-        return None
-    return (int(match.group(1)), int(match.group(2) or 0)) < (9, 0)
+def check_mongod_version(binaries_dir):
+    """Raise ValueError unless the mongod in binaries_dir reports 9.0+.
 
-
-def _resolve_published_version(version, arch=None):
-    """Resolve a version alias to a concrete version via mongodl's catalog.
-
-    Filters by the same target/arch/edition/component the subsequent
-    download uses, so the gate judges the artifact that will actually be
-    downloaded (releases can be published for platforms at different times).
-    Raises ValueError when the alias cannot be resolved (unknown alias, no
-    catalog entry, or the release list is unreachable) so the gate stays
-    fail-fast rather than deferring to a server startup failure.
+    This is the authoritative --otel version gate: it measures the binary
+    that will actually run, so it covers explicit versions, aliases,
+    nightlies (including stale ones on dropped targets), and
+    --existing-binaries-dir with a single mechanism.
     """
-    evg_dir = Path(__file__).absolute().parent.parent
-    sys.path.insert(0, str(evg_dir))
-    try:
-        # Deferred: mongodl lives in .evergreen, only on sys.path here.
-        from mongodl import Cache, infer_arch, infer_target
-
-        cache = Cache.open_in(evg_dir.parent / ".local" / "cache")
-        cache.refresh_full_json()
-        component = next(
-            iter(
-                cache.db.iter_available(
-                    version=version,
-                    target=infer_target(version),
-                    arch=arch or infer_arch(),
-                    edition="enterprise",
-                    component="archive",
-                )
-            ),
-            None,
-        )
-    except ValueError:
-        raise
-    except Exception as e:
-        raise ValueError(
-            f"--otel could not resolve version {version!r} from the release "
-            f"list: {e}"
-        ) from e
-    finally:
-        sys.path.remove(str(evg_dir))
-    if component is None:
-        raise ValueError(
-            f"--otel could not resolve version {version!r}: no published "
-            f"release matches it for this platform"
-        )
-    return component.version
-
-
-def _check_existing_binaries_version(binaries_dir):
-    """Raise ValueError unless the mongod in binaries_dir reports 9.0+."""
     ext = ".exe" if PLATFORM == "win32" else ""
     mongod = Path(binaries_dir) / f"mongod{ext}"
     try:
@@ -233,14 +164,22 @@ def _check_existing_binaries_version(binaries_dir):
             f"--otel could not determine the server version from "
             f"{mongod} --version: {e}"
         ) from e
-    match = re.search(r"db version v(\d+)\.(\d+)", output)
-    if match is None:
+    version = _version_from_mongod_output(output)
+    if version is None:
         raise ValueError(
             f"--otel could not parse the server version from "
             f"{mongod} --version output: {output.splitlines()[:1]}"
         )
-    if (int(match.group(1)), int(match.group(2))) < (9, 0):
+    if version < (9, 0):
         raise ValueError(
-            f"--otel requires MongoDB 9.0+, but --existing-binaries-dir "
-            f"contains {match.group(0)}"
+            f"--otel requires MongoDB 9.0+, but the mongod binary reports "
+            f"db version v{version[0]}.{version[1]}"
         )
+
+
+def _version_from_mongod_output(output):
+    """(major, minor) from `mongod --version` output, or None."""
+    match = re.search(r"db version v(\d+)\.(\d+)", output)
+    if match is None:
+        return None
+    return (int(match.group(1)), int(match.group(2)))

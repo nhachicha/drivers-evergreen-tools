@@ -9,12 +9,12 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from otel import (
     OTEL_EXTERNAL_TRACING_JSON,
     OTEL_SAMPLING_JSON,
+    _version_from_mongod_output,
     handle_otel_config,
     normalize_path,
     validate_otel_opts,
@@ -203,22 +203,11 @@ class TestValidateOtelOpts(unittest.TestCase):
         validate_otel_opts(make_opts(version="latest"))
         validate_otel_opts(make_opts(version="latest-build"))
 
-    def test_alias_resolving_below_90_rejected(self):
-        with mock.patch(
-            "otel._resolve_published_version", return_value="8.2.1"
-        ), self.assertRaisesRegex(ValueError, "resolves to 8.2.1"):
-            validate_otel_opts(make_opts(version="rapid"))
-
-    def test_alias_resolving_to_90_allowed(self):
-        with mock.patch("otel._resolve_published_version", return_value="9.1.0"):
-            validate_otel_opts(make_opts(version="latest-release"))
-
-    def test_unresolvable_alias_rejected(self):
-        with mock.patch(
-            "otel._resolve_published_version",
-            side_effect=ValueError("--otel could not resolve"),
-        ), self.assertRaisesRegex(ValueError, "could not resolve"):
-            validate_otel_opts(make_opts(version="rapid"))
+    def test_aliases_pass_through_to_binary_probe(self):
+        # Aliases are not decided here: the authoritative gate is
+        # check_mongod_version() on the downloaded binary.
+        for version in ("rapid", "latest-release", "latest-stable"):
+            validate_otel_opts(make_opts(version=version))
 
     def test_90_and_above_allowed(self):
         validate_otel_opts(make_opts(version="9.0"))
@@ -257,6 +246,26 @@ class TestValidateOtelOpts(unittest.TestCase):
     def test_not_probed_when_otel_unset(self):
         # existing-binaries probing must not run when otel is off.
         validate_otel_opts(make_opts(otel=False, existing_binaries_dir="/nonexistent"))
+
+    def test_version_string_gate_skipped_with_existing_binaries(self):
+        # The requested version is not what runs; the binary probe decides.
+        validate_otel_opts(make_opts(version="8.0", existing_binaries_dir="/some/dir"))
+
+
+class TestVersionFromMongodOutput(unittest.TestCase):
+    def test_parses_real_output_shape(self):
+        output = (
+            "db version v9.1.0\n"
+            'Build Info: {"version": "9.1.0", "openSSLVersion": '
+            '"OpenSSL 1.1.1k  FIPS 25 Mar 2021"}\n'
+        )
+        self.assertEqual(_version_from_mongod_output(output), (9, 1))
+
+    def test_does_not_match_other_numbers(self):
+        # OpenSSL versions, distro strings etc. must not be picked up.
+        self.assertIsNone(
+            _version_from_mongod_output("OpenSSL 1.1.1k\ndistmod: rhel88\n")
+        )
 
 
 if __name__ == "__main__":

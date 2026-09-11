@@ -18,9 +18,9 @@ popd > /dev/null
 
 bash install-cli.sh "$(pwd)/orchestration"
 
-# Fail-fast checks: incompatible combinations must error before any download,
-# with the expected message -- a bare non-zero exit could also be an
-# unrelated crash (e.g. an ImportError) masquerading as a working gate.
+# Fail-fast checks: incompatible combinations must error with the expected
+# message -- a bare non-zero exit could also be an unrelated crash (e.g. an
+# ImportError) masquerading as a working gate.
 assert_gate_rejects() {
   local expected="$1"
   shift
@@ -43,25 +43,37 @@ assert_gate_rejects "local-atlas" \
 assert_gate_rejects "DOCKER_RUNNING" \
   env OTEL=1 DOCKER_RUNNING=true ./orchestration/drivers-orchestration run --version latest
 
-# --existing-binaries-dir bypasses version selection, so the gate probes the
-# actual mongod binary: a real 8.0 binary must be rejected before any
-# download or deployment.
-EXISTING_BIN_DIR=mongodl_otel_test
-rm -rf ${EXISTING_BIN_DIR}
-uv run python mongodl.py --edition enterprise --version 8.0 --component archive --out ${EXISTING_BIN_DIR} --strip-path-components 2 --cache-dir "${DRIVERS_TOOLS}/.local/cache" --retries 5
-assert_gate_rejects "existing-binaries-dir contains" \
-  env OTEL=1 ./orchestration/drivers-orchestration run --existing-binaries-dir=${EXISTING_BIN_DIR}
-rm -rf ${EXISTING_BIN_DIR}
+# The authoritative version gate probes the binary that will actually run: a
+# real 8.0 binary via --existing-binaries-dir must be rejected before the
+# remaining downloads and the deployment.
+EXISTING_BIN_80=mongodl_otel_test_80
+rm -rf ${EXISTING_BIN_80}
+uv run python mongodl.py --edition enterprise --version 8.0 --component archive --out ${EXISTING_BIN_80} --strip-path-components 2 --cache-dir "${DRIVERS_TOOLS}/.local/cache" --retries 5
+assert_gate_rejects "mongod binary reports db version v8.0" \
+  env OTEL=1 ./orchestration/drivers-orchestration run --existing-binaries-dir=${EXISTING_BIN_80}
+rm -rf ${EXISTING_BIN_80}
 
-# Live run: the OTel parameters must be applied and the trace dir exported.
-OTEL=1 ./orchestration/drivers-orchestration run --version latest
-
+# Live sharded cluster through --existing-binaries-dir, in one leg:
+# - mongos must accept the injected setParameters (router entries hold proc
+#   params directly, without a procParams wrapper);
+# - per-port trace directories for routers and shard members;
+# - --version 8.0 is deliberate: the probed binary is authoritative and a
+#   stale requested version must not veto a compatible 9.0+ build
+#   (--skip-crypt-shared avoids downloading the only 8.0 artifact the
+#   version would otherwise select).
+EXISTING_BIN_LATEST=otel_existing_bin_test
+rm -rf ${EXISTING_BIN_LATEST}
+uv run python mongodl.py --edition enterprise --version latest --component archive --out ${EXISTING_BIN_LATEST} --strip-path-components 2 --cache-dir "${DRIVERS_TOOLS}/.local/cache" --retries 5
+OTEL=1 ./orchestration/drivers-orchestration run --topology sharded_cluster --existing-binaries-dir=${EXISTING_BIN_LATEST} --version 8.0 --skip-crypt-shared
 grep -q '^OTEL_TRACE_DIR=' mo-expansion.sh
 # shellcheck disable=SC1091
 . ./mo-expansion.sh
+test -n "${OTEL_TRACE_DIR}"
+# Per-port directories for the mongos (27017) and a shard member (27217).
 test -d "${OTEL_TRACE_DIR}/27017"
-
-$MONGODB_BINARIES/mongosh "mongodb://localhost:27017/?directConnection=true" --eval '
+test -d "${OTEL_TRACE_DIR}/27217"
+# getParameter against the mongos itself: the router's own parameters.
+$MONGODB_BINARIES/mongosh "mongodb://localhost:27017" --eval '
   const p = db.adminCommand({
     getParameter: 1,
     opentelemetryTraceDirectory: 1,
@@ -73,33 +85,10 @@ $MONGODB_BINARIES/mongosh "mongodb://localhost:27017/?directConnection=true" --e
       p.openTelemetryExternalTracing.tokenBucketRateLimit.maxTokens !== 1000 ||
       p.openTelemetryTracingSampling.defaultSampling.samplingFactor !== 1.0 ||
       p.openTelemetryTracingFileFlushCount !== 1) {
-    throw new Error("unexpected OTel parameters: " + JSON.stringify(p));
+    throw new Error("unexpected OTel parameters on mongos: " + JSON.stringify(p));
   }
-  print("OTEL_PARAMS_OK");
-' | grep -q OTEL_PARAMS_OK
-
-./orchestration/drivers-orchestration stop
-
-# Positive probe path: a 9.0+ --existing-binaries-dir (copied from the latest
-# binaries the previous run downloaded) passes the gate and the cluster comes
-# up with the OTel parameters applied.
-EXISTING_BIN_LATEST=otel_existing_bin_test
-rm -rf ${EXISTING_BIN_LATEST}
-# The previous run already downloaded the latest archive into this cache
-# dir, so this is a re-extract, not a second download.
-uv run python mongodl.py --edition enterprise --version latest --component archive --out ${EXISTING_BIN_LATEST} --strip-path-components 2 --cache-dir "${DRIVERS_TOOLS}/.local/cache" --retries 5
-# --version 8.0 is deliberate: with --existing-binaries-dir the probed
-# binary is authoritative and a stale requested version must not veto a
-# compatible 9.0+ build (--skip-crypt-shared avoids downloading the only
-# 8.0 artifact the version would otherwise select).
-OTEL=1 ./orchestration/drivers-orchestration run --existing-binaries-dir=${EXISTING_BIN_LATEST} --version 8.0 --skip-crypt-shared
-$MONGODB_BINARIES/mongosh "mongodb://localhost:27017/?directConnection=true" --eval '
-  const p = db.adminCommand({getParameter: 1, opentelemetryTraceDirectory: 1});
-  if (!p.opentelemetryTraceDirectory.endsWith("27017")) {
-    throw new Error("unexpected OTel parameters via existing binaries: " + JSON.stringify(p));
-  }
-  print("OTEL_EXISTING_BIN_PARAMS_OK");
-' | grep -q OTEL_EXISTING_BIN_PARAMS_OK
+  print("OTEL_MONGOS_PARAMS_OK");
+' | grep -q OTEL_MONGOS_PARAMS_OK
 ./orchestration/drivers-orchestration stop
 rm -rf ${EXISTING_BIN_LATEST}
 
@@ -134,29 +123,6 @@ $MONGODB_BINARIES/mongosh "mongodb://localhost:27017/?directConnection=true" --e
   print("OTEL_RUNNER_PARAMS_OK");
 ' | grep -q OTEL_RUNNER_PARAMS_OK
 bash ./run-mongodb.sh stop
-
-# Sharded topology: mongos must accept the injected setParameters too
-# (router entries hold proc params directly, without a procParams wrapper).
-OTEL=1 ./orchestration/drivers-orchestration run --version latest --topology sharded_cluster
-# shellcheck disable=SC1091
-. ./mo-expansion.sh
-# Per-port directories for a shard member (27217) and the mongos (27017).
-test -d "${OTEL_TRACE_DIR}/27217"
-test -d "${OTEL_TRACE_DIR}/27017"
-# getParameter against the mongos itself: the router's own parameters.
-$MONGODB_BINARIES/mongosh "mongodb://localhost:27017" --eval '
-  const p = db.adminCommand({
-    getParameter: 1,
-    opentelemetryTraceDirectory: 1,
-    openTelemetryExternalTracing: 1,
-  });
-  if (!p.opentelemetryTraceDirectory.endsWith("27017") ||
-      p.openTelemetryExternalTracing.tokenBucketRateLimit.maxTokens !== 1000) {
-    throw new Error("unexpected OTel parameters on mongos: " + JSON.stringify(p));
-  }
-  print("OTEL_MONGOS_PARAMS_OK");
-' | grep -q OTEL_MONGOS_PARAMS_OK
-./orchestration/drivers-orchestration stop
 
 # Opt-in regression: without OTEL, no trace dir and no expansion entry.
 ./orchestration/drivers-orchestration run --version latest

@@ -27,7 +27,12 @@ import psutil
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from mongodb_runner import _mongodb_runner_supported, start_mongodb_runner
-from otel import OTEL_DIR_NAME, handle_otel_config, validate_otel_opts
+from otel import (
+    OTEL_DIR_NAME,
+    check_mongod_version,
+    handle_otel_config,
+    validate_otel_opts,
+)
 
 # Get global values.
 HERE = Path(__file__).absolute().parent
@@ -544,6 +549,16 @@ def run(opts):
             shutil.copytree(opts.existing_binaries_dir, mdb_binaries)
 
         run_command(f"{mdb_binaries_str}/mongod --version")
+
+        # The authoritative --otel version gate: probe the binary that will
+        # actually run (covers aliases, nightlies, and existing binaries),
+        # before the remaining downloads and the deployment.
+        if opts.otel:
+            try:
+                check_mongod_version(mdb_binaries)
+            except ValueError as e:
+                LOGGER.error(str(e))
+                sys.exit(1)
 
     # Download legacy shell.
     if opts.install_legacy_shell:

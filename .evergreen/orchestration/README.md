@@ -23,13 +23,13 @@ environment variable.)
 This requires MongoDB 9.0+ (the setParameters do not exist on older servers)
 and a locally orchestrated cluster: the file exporter has no wire protocol,
 so the test runner must share a filesystem with the server processes.
-Orchestration fails fast if `OTEL` is combined with a version below 9.0,
-`DOCKER_RUNNING`, or `LOCAL_ATLAS` (`--local-atlas`). Version aliases such
-as `rapid`, `latest-release`, and `latest-stable` are resolved through the
-release list (the same way the download resolves them) and the resolved
-version is gated, so an alias is accepted as soon as it resolves to 9.0+.
-With `--existing-binaries-dir` the version of the provided `mongod` binary
-is probed directly, since it bypasses version selection.
+Orchestration fails fast if `OTEL` is combined with `DOCKER_RUNNING`,
+`LOCAL_ATLAS` (`--local-atlas`), or an explicitly sub-9.0 version string.
+The authoritative version gate probes the `mongod` binary that will
+actually run (right after it is downloaded or copied, before the
+deployment), so version aliases such as `rapid` are accepted as soon as
+they deliver a 9.0+ server, and `--existing-binaries-dir` is judged by the
+binary it provides rather than the requested version.
 
 Span export additionally requires a mongod binary compiled with
 OpenTelemetry support (the server's span-export tests are tagged
